@@ -1,44 +1,91 @@
 package edu.skku.cs.visualvroom;
 
+import android.util.Log;
+
+import org.json.JSONObject;
+
 import java.io.IOException;
 
-import okhttp3.MediaType;
-import okhttp3.MultipartBody;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
+import okhttp3.*;
+import org.json.JSONObject;
+import java.io.IOException;
+import android.util.Log;
 
 public class AudioSender {
-    private static final String BACKEND_URL = "http://10.5.31.87:5000/upload";
-    private final OkHttpClient client = new OkHttpClient();
+    private static final String TAG = "AudioSender";
+    private static final String BACKEND_URL = "http://211.211.177.45:8017/predict";
+    private final OkHttpClient client;
 
-    public void sendAudioFiles(byte[] leftData, byte[] rightData, byte[] bothData) {
-        MultipartBody.Builder builder = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM);
+    public AudioSender() {
+        this.client = new OkHttpClient.Builder()
+                .build();
+    }
 
-        // Add each audio file
-        builder.addFormDataPart("left_mic", "left.raw",
-                RequestBody.create(MediaType.parse("application/octet-stream"), leftData));
+    public interface AudioSenderCallback {
+        void onSuccess(String vehicleType, String direction, double confidence);
+        void onError(String error);
+    }
 
-        builder.addFormDataPart("right_mic", "right.raw",
-                RequestBody.create(MediaType.parse("application/octet-stream"), rightData));
-
-        builder.addFormDataPart("both_mics", "both.raw",
-                RequestBody.create(MediaType.parse("application/octet-stream"), bothData));
-
-        Request request = new Request.Builder()
-                .url(BACKEND_URL)
-                .post(builder.build())
+    public void sendAudioFiles(byte[] leftData, byte[] rightData, byte[] rearData, AudioSenderCallback callback) {
+        // Create request body parts
+        RequestBody requestBody = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("sample_rate", "16000")
+                .addFormDataPart("left_channel", "left.raw",
+                        RequestBody.create(MediaType.parse("application/octet-stream"), leftData))
+                .addFormDataPart("right_channel", "right.raw",
+                        RequestBody.create(MediaType.parse("application/octet-stream"), rightData))
+                .addFormDataPart("rear_channel", "rear.raw",
+                        RequestBody.create(MediaType.parse("application/octet-stream"), rearData))
                 .build();
 
-        try {
-            Response response = client.newCall(request).execute();
-            if (!response.isSuccessful()) {
-                throw new IOException("Unexpected response " + response);
+        // Build the request
+        Request request = new Request.Builder()
+                .url(BACKEND_URL)
+                .post(requestBody)
+                .build();
+
+        // Execute the request asynchronously
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.e(TAG, "Failed to send audio data", e);
+                callback.onError("Network error: " + e.getMessage());
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (ResponseBody responseBody = response.body()) {
+                    if (!response.isSuccessful()) {
+                        callback.onError("Server error: " + response.code());
+                        return;
+                    }
+
+                    if (responseBody == null) {
+                        callback.onError("Empty response from server");
+                        return;
+                    }
+
+                    String jsonStr = responseBody.string();
+                    JSONObject json = new JSONObject(jsonStr);
+
+                    if (json.has("message")) {
+                        // No confident prediction
+                        callback.onError(json.getString("message"));
+                        return;
+                    }
+
+                    // Parse successful response
+                    String vehicleType = json.getString("vehicle_type");
+                    String direction = json.getString("direction");
+                    double confidence = json.getDouble("confidence");
+
+                    callback.onSuccess(vehicleType, direction, confidence);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error processing response", e);
+                    callback.onError("Error processing response: " + e.getMessage());
+                }
+            }
+        });
     }
 }
