@@ -12,8 +12,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.util.Log;
-import android.view.View;
-import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -47,6 +45,7 @@ public class MainActivity extends AppCompatActivity {
     // Reference to fragments
     private SoundDetectionFragment soundDetectionFragment;
     private SpeechToTextFragment speechToTextFragment;
+    private AudioRecorderFragment audioRecorderFragment;
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -81,7 +80,17 @@ public class MainActivity extends AppCompatActivity {
         // Connect TabLayout with ViewPager2
         new TabLayoutMediator(tabLayout, viewPager,
                 (tab, position) -> {
-                    tab.setText(position == 0 ? "Sound Detection" : "Speech to Text");
+                    switch (position) {
+                        case 0:
+                            tab.setText("Sound Detection");
+                            break;
+                        case 1:
+                            tab.setText("Speech to Text");
+                            break;
+                        case 2:
+                            tab.setText("Audio Recorder");
+                            break;
+                    }
                 }
         ).attach();
 
@@ -110,18 +119,24 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public Fragment createFragment(int position) {
-            if (position == 0) {
-                soundDetectionFragment = new SoundDetectionFragment();
-                return soundDetectionFragment;
-            } else {
-                speechToTextFragment = new SpeechToTextFragment();
-                return speechToTextFragment;
+            switch (position) {
+                case 0:
+                    soundDetectionFragment = new SoundDetectionFragment();
+                    return soundDetectionFragment;
+                case 1:
+                    speechToTextFragment = new SpeechToTextFragment();
+                    return speechToTextFragment;
+                case 2:
+                    audioRecorderFragment = new AudioRecorderFragment();
+                    return audioRecorderFragment;
+                default:
+                    throw new IllegalStateException("Unexpected position " + position);
             }
         }
 
         @Override
         public int getItemCount() {
-            return 2;
+            return 3; // Updated to include the new AudioRecorderFragment
         }
     }
 

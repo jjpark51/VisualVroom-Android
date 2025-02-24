@@ -9,12 +9,15 @@ import androidx.fragment.app.Fragment;
 import androidx.core.content.ContextCompat;
 
 import com.airbnb.lottie.LottieAnimationView;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 public class SoundDetectionFragment extends Fragment {
     private View leftIndicator;
     private View rightIndicator;
     private LottieAnimationView soundAnimation;
     private TextView soundText;
+    private FloatingActionButton micButton;
+    private boolean isRecording = false;
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -24,11 +27,27 @@ public class SoundDetectionFragment extends Fragment {
         rightIndicator = view.findViewById(R.id.rightIndicator);
         soundAnimation = view.findViewById(R.id.soundAnimation);
         soundText = view.findViewById(R.id.soundText);
+        micButton = view.findViewById(R.id.micButton);
 
-        // Start recording when the fragment is created
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).startRecording();
-        }
+        // Set up mic button click listener
+        micButton.setOnClickListener(v -> {
+            if (getActivity() instanceof MainActivity) {
+                MainActivity activity = (MainActivity) getActivity();
+                if (!isRecording) {
+                    // Start recording
+                    activity.startRecording();
+                    micButton.setImageResource(R.drawable.ic_mic_active);
+                    isRecording = true;
+                } else {
+                    // Stop recording
+                    activity.stopRecording();
+                    micButton.setImageResource(R.drawable.ic_mic);
+                    isRecording = false;
+                    // Reset UI elements
+                    resetUI();
+                }
+            }
+        });
 
         return view;
     }
@@ -63,15 +82,33 @@ public class SoundDetectionFragment extends Fragment {
         });
     }
 
+    private void resetUI() {
+        if (getActivity() == null) return;
+
+        getActivity().runOnUiThread(() -> {
+            // Reset indicators
+            leftIndicator.setBackgroundColor(ContextCompat.getColor(getActivity(), android.R.color.transparent));
+            rightIndicator.setBackgroundColor(ContextCompat.getColor(getActivity(), android.R.color.transparent));
+
+            // Reset animation
+            if (soundAnimation != null) {
+                soundAnimation.cancelAnimation();
+                soundAnimation.setVisibility(View.GONE);
+            }
+
+            // Reset text
+            soundText.setText("");
+            soundText.setVisibility(View.GONE);
+        });
+    }
+
     private int getAnimationResource(String vehicleType) {
         switch (vehicleType.toLowerCase()) {
-            case "ambulance":
+            case "Siren":
                 return R.raw.siren;
-            case "police":
+            case "Bike":
                 return R.raw.siren;
-            case "firetruck":
-                return R.raw.siren;
-            case "horn":
+            case "Horn":
                 return R.raw.car_horns;
             default:
                 return 0;
@@ -84,8 +121,8 @@ public class SoundDetectionFragment extends Fragment {
         if (soundAnimation != null) {
             soundAnimation.cancelAnimation();
         }
-        // Stop recording when the fragment is destroyed
-        if (getActivity() instanceof MainActivity) {
+        // Stop recording if it's still running
+        if (isRecording && getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).stopRecording();
         }
     }

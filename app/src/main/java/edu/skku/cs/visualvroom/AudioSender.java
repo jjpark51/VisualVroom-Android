@@ -1,15 +1,9 @@
 package edu.skku.cs.visualvroom;
 
 import android.util.Log;
-
-import org.json.JSONObject;
-
-import java.io.IOException;
-
 import okhttp3.*;
 import org.json.JSONObject;
 import java.io.IOException;
-import android.util.Log;
 
 public class AudioSender {
     private static final String TAG = "AudioSender";
@@ -26,7 +20,7 @@ public class AudioSender {
         void onError(String error);
     }
 
-    public void sendAudioFiles(byte[] leftData, byte[] rightData, byte[] rearData, AudioSenderCallback callback) {
+    public void sendAudioFiles(byte[] leftData, byte[] rightData, AudioSenderCallback callback) {
         // Create request body parts
         RequestBody requestBody = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
@@ -35,8 +29,6 @@ public class AudioSender {
                         RequestBody.create(MediaType.parse("application/octet-stream"), leftData))
                 .addFormDataPart("right_channel", "right.raw",
                         RequestBody.create(MediaType.parse("application/octet-stream"), rightData))
-                .addFormDataPart("rear_channel", "rear.raw",
-                        RequestBody.create(MediaType.parse("application/octet-stream"), rearData))
                 .build();
 
         // Build the request

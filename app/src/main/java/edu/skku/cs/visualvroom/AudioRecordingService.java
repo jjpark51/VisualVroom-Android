@@ -18,6 +18,8 @@ import androidx.core.content.ContextCompat;
 
 import okhttp3.*;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.ArrayDeque;
@@ -29,12 +31,12 @@ public class AudioRecordingService extends Service {
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
     private static final int BYTES_PER_SAMPLE = 2;
     private static final int BUFFER_SIZE = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 2;
+            SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 4; // Increased buffer size
     private static final String NOTIFICATION_CHANNEL_ID = "audio_service_channel";
     private static final int NOTIFICATION_ID = 1;
 
-    // Buffer for 3 seconds of audio
-    private static final int SECONDS_TO_BUFFER = 3;
+    // Buffer for 5 seconds of audio (increased from 3)
+    private static final int SECONDS_TO_BUFFER = 5;
     private static final int SAMPLES_PER_BUFFER = SAMPLE_RATE * SECONDS_TO_BUFFER;
 
     private AudioRecord audioRecord;
@@ -43,11 +45,23 @@ public class AudioRecordingService extends Service {
     private final OkHttpClient client;
     private static final String SERVER_URL = "http://211.211.177.45:8017/predict";
 
-    // Circular buffers for each channel
+    // Buffers for left and right channels
     private final ArrayDeque<Short> leftBuffer = new ArrayDeque<>(SAMPLES_PER_BUFFER);
     private final ArrayDeque<Short> rightBuffer = new ArrayDeque<>(SAMPLES_PER_BUFFER);
-    private final ArrayDeque<Short> stereoBuffer = new ArrayDeque<>(SAMPLES_PER_BUFFER * 2);
 
+    // Audio level monitoring
+    private float leftMicLevel = 0;
+    private float rightMicLevel = 0;
+    private static final int LEVEL_MONITOR_INTERVAL = 100;
+
+    // RMS level tracking for auto-gain
+    private double leftRmsSum = 0;
+    private double rightRmsSum = 0;
+    private int rmsSampleCount = 0;
+    private static final int RMS_WINDOW_SIZE = SAMPLE_RATE; // 1 second window
+    private static final double BASE_GAIN = 50.0;  // Increased from 25.0f
+    private static final double MAX_GAIN = 100.0;    // Increased from 15.0
+    private static final double TARGET_RMS = 0.95;  // Increased from 0.9
     public AudioRecordingService() {
         client = new OkHttpClient.Builder()
                 .build();
@@ -121,22 +135,41 @@ public class AudioRecordingService extends Service {
         }
 
         try {
-            audioRecord = new AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.DEFAULT)
-                    .setAudioFormat(new AudioFormat.Builder()
-                            .setEncoding(AUDIO_FORMAT)
-                            .setSampleRate(SAMPLE_RATE)
-                            .setChannelMask(CHANNEL_CONFIG)
-                            .build())
-                    .setBufferSizeInBytes(BUFFER_SIZE)
+            // Configure for stereo recording with higher quality settings
+            AudioFormat audioFormat = new AudioFormat.Builder()
+                    .setEncoding(AUDIO_FORMAT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(CHANNEL_CONFIG)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .build();
+
+            // Try to use UNPROCESSED source first for raw audio
+            try {
+                audioRecord = new AudioRecord.Builder()
+                        .setAudioSource(MediaRecorder.AudioSource.MIC)
+                        .setAudioFormat(audioFormat)
+                        .setBufferSizeInBytes(BUFFER_SIZE)
+                        .build();
+            } catch (Exception e) {
+                // Fall back to DEFAULT if UNPROCESSED is not supported
+                Log.w(TAG, "UNPROCESSED source not supported, falling back to DEFAULT");
+                audioRecord = new AudioRecord.Builder()
+                        .setAudioSource(MediaRecorder.AudioSource.DEFAULT)
+                        .setAudioFormat(audioFormat)
+                        .setBufferSizeInBytes(BUFFER_SIZE)
+                        .build();
+            }
 
             if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
                 throw new IllegalStateException("Failed to initialize AudioRecord");
             }
-        } catch (SecurityException e) {
-            Log.e(TAG, "Security Exception initializing AudioRecord: " + e.getMessage());
-            throw e;
+
+            Log.i(TAG, "AudioRecord initialized successfully");
+            Log.i(TAG, "Channel count: " + audioFormat.getChannelCount());
+            Log.i(TAG, "Channel mask: " + audioFormat.getChannelMask());
+            Log.i(TAG, "Sample rate: " + audioFormat.getSampleRate());
+            Log.i(TAG, "Encoding: " + audioFormat.getEncoding());
+            Log.i(TAG, "Buffer size: " + BUFFER_SIZE);
         } catch (Exception e) {
             Log.e(TAG, "Error initializing AudioRecord: " + e.getMessage());
             throw e;
@@ -163,7 +196,6 @@ public class AudioRecordingService extends Service {
                     int shortsRead = audioRecord.read(readBuffer, 0, readBuffer.length);
 
                     if (shortsRead > 0) {
-                        // Process and buffer the audio data
                         processAudioData(readBuffer, shortsRead);
                     }
                 }
@@ -176,27 +208,113 @@ public class AudioRecordingService extends Service {
         recordingThread.start();
     }
 
+    private double calculateOptimalGain(short[] buffer, int shortsRead) {
+        double maxAmplitude = 0;
+        for (int i = 0; i < shortsRead; i++) {
+            maxAmplitude = Math.max(maxAmplitude, Math.abs(buffer[i]));
+        }
+
+        // Target amplitude around 50-70% of max (32767)
+        double targetAmplitude = 20000;  // About 60% of max
+        return Math.min(targetAmplitude / (maxAmplitude + 1e-6), MAX_GAIN);  // Use MAX_GAIN constant
+    }
+
+
     private synchronized void processAudioData(short[] buffer, int shortsRead) {
-        // Add new samples to buffers
+        // Log original signal values
+        for (int i = 0; i < Math.min(10, shortsRead); i += 2) {
+            Log.d(TAG, String.format("Original Signal - Left: %d, Right: %d",
+                    buffer[i], buffer[i + 1]));
+        }
+
+        int sampleCounter = 0;
+        float leftSum = 0;
+        float rightSum = 0;
+
+        // Process interleaved stereo data
         for (int i = 0; i < shortsRead; i += 2) {
-            // Maintain buffer size by removing old samples if necessary
+            // Apply BASE_GAIN
+            double leftAmplified = buffer[i] * BASE_GAIN;
+            double rightAmplified = buffer[i + 1] * BASE_GAIN;
+
+            short leftSample = (short)Math.max(Math.min(leftAmplified, 32767), -32768);
+            short rightSample = (short)Math.max(Math.min(rightAmplified, 32767), -32768);
+
+            // Log amplified values for first few samples
+            if (i < 10) {
+                Log.d(TAG, String.format("After BASE_GAIN - Left: %d (raw: %.2f), Right: %d (raw: %.2f)",
+                        leftSample, leftAmplified, rightSample, rightAmplified));
+            }
+
+            // Update RMS calculation
+            leftRmsSum += (leftSample * leftSample) / 32768.0 / 32768.0;
+            rightRmsSum += (rightSample * rightSample) / 32768.0 / 32768.0;
+            rmsSampleCount++;
+
+            // Apply auto-gain if we have enough samples
+            if (rmsSampleCount >= RMS_WINDOW_SIZE) {
+                double leftRms = Math.sqrt(leftRmsSum / rmsSampleCount);
+                double rightRms = Math.sqrt(rightRmsSum / rmsSampleCount);
+
+                Log.d(TAG, String.format("RMS Values - Left: %.4f, Right: %.4f", leftRms, rightRms));
+
+                // Calculate gain adjustments
+                double leftGain = TARGET_RMS / Math.max(leftRms, 1e-9);
+                double rightGain = TARGET_RMS / Math.max(rightRms, 1e-9);
+
+                // Limit to MAX_GAIN
+                leftGain = Math.min(leftGain, MAX_GAIN);
+                rightGain = Math.min(rightGain, MAX_GAIN);
+
+                Log.d(TAG, String.format("Auto Gains - Left: %.2f, Right: %.2f", leftGain, rightGain));
+
+                // Apply gain (with limiting)
+                double leftFinal = leftSample * leftGain;
+                double rightFinal = rightSample * rightGain;
+
+                leftSample = (short) Math.max(Math.min(leftFinal, 32767), -32768);
+                rightSample = (short) Math.max(Math.min(rightFinal, 32767), -32768);
+
+                if (i < 10) {
+                    Log.d(TAG, String.format("Final Values - Left: %d (raw: %.2f), Right: %d (raw: %.2f)",
+                            leftSample, leftFinal, rightSample, rightFinal));
+                }
+
+                // Reset RMS tracking
+                leftRmsSum = 0;
+                rightRmsSum = 0;
+                rmsSampleCount = 0;
+            }
+
+            // Maintain buffer size
             if (leftBuffer.size() >= SAMPLES_PER_BUFFER) {
                 leftBuffer.removeFirst();
                 rightBuffer.removeFirst();
             }
-            if (stereoBuffer.size() >= SAMPLES_PER_BUFFER * 2) {
-                stereoBuffer.removeFirst();
-                stereoBuffer.removeFirst();
-            }
 
             // Add new samples
-            short leftSample = buffer[i];
-            short rightSample = buffer[i + 1];
-
             leftBuffer.addLast(leftSample);
             rightBuffer.addLast(rightSample);
-            stereoBuffer.addLast(leftSample);
-            stereoBuffer.addLast(rightSample);
+
+            // Calculate audio levels
+            sampleCounter++;
+            leftSum += Math.abs(leftSample);
+            rightSum += Math.abs(rightSample);
+
+            // Monitor levels periodically
+            if (sampleCounter >= LEVEL_MONITOR_INTERVAL) {
+                leftMicLevel = leftSum / LEVEL_MONITOR_INTERVAL;
+                rightMicLevel = rightSum / LEVEL_MONITOR_INTERVAL;
+
+                // Log mic levels for verification
+                Log.d(TAG, String.format("Mic Levels - Left: %.2f, Right: %.2f",
+                        leftMicLevel, rightMicLevel));
+
+                // Reset counters
+                sampleCounter = 0;
+                leftSum = 0;
+                rightSum = 0;
+            }
         }
 
         // Check if we have enough data to send
@@ -205,41 +323,58 @@ public class AudioRecordingService extends Service {
         }
     }
 
+    private byte[] normalizeAudioData(byte[] rawData) {
+        // Convert bytes to shorts
+        short[] shorts = new short[rawData.length / 2];
+        ByteBuffer.wrap(rawData).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts);
+
+        // Pre-amplification (add this)
+        float preAmpGain = 5.0f;
+        for (int i = 0; i < shorts.length; i++) {
+            shorts[i] = (short)Math.max(Math.min(shorts[i] * preAmpGain, 32767), -32768);
+        }
+
+        // Convert back to bytes without normalization
+        byte[] amplified = new byte[rawData.length];
+        for (int i = 0; i < shorts.length; i++) {
+            amplified[i*2] = (byte)(shorts[i] & 0xff);
+            amplified[i*2 + 1] = (byte)((shorts[i] >> 8) & 0xff);
+        }
+
+        return amplified;
+    }
     private void sendBufferedData() {
-        if (leftBuffer.size() < SAMPLES_PER_BUFFER) return;
-
         try {
-            // Create the MultipartBody with proper Content-Type headers
+            // Convert buffers to byte arrays
+            byte[] leftData = normalizeAudioData(shortArrayToByteArray(new ArrayList<>(leftBuffer)));
+            byte[] rightData = normalizeAudioData(shortArrayToByteArray(new ArrayList<>(rightBuffer)));
+
+            // Create request parts
             MultipartBody.Builder builder = new MultipartBody.Builder()
-                    .setType(MultipartBody.FORM);
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("sample_rate", String.valueOf(SAMPLE_RATE));
 
-            // Add audio_request as application/json
-            MediaType jsonType = MediaType.parse("application/json; charset=utf-8");
-//            RequestBody audioRequestBody = RequestBody.create(
-//                    jsonType,
-//                    "{\"sample_rate\":" + SAMPLE_RATE + "}"
-//            );
-            builder.addFormDataPart("sample_rate", String.valueOf(SAMPLE_RATE));
-
-            // Add channel data
+            // Add parts to the request
             MediaType audioType = MediaType.parse("application/octet-stream");
-            builder.addFormDataPart("left_channel", "left.raw",
-                    RequestBody.create(audioType, shortArrayToByteArray(new ArrayList<>(leftBuffer))));
-            builder.addFormDataPart("right_channel", "right.raw",
-                    RequestBody.create(audioType, shortArrayToByteArray(new ArrayList<>(rightBuffer))));
-            builder.addFormDataPart("rear_channel", "rear.raw",
-                    RequestBody.create(audioType, shortArrayToByteArray(new ArrayList<>(stereoBuffer))));
 
+            // Add left channel
+            RequestBody leftBody = RequestBody.create(audioType, leftData);
+            builder.addFormDataPart("left_channel", "left.raw", leftBody);
+
+            // Add right channel
+            RequestBody rightBody = RequestBody.create(audioType, rightData);
+            builder.addFormDataPart("right_channel", "right.raw", rightBody);
+
+            // Build and send the request
             Request request = new Request.Builder()
                     .url(SERVER_URL)
                     .post(builder.build())
                     .build();
 
-            // Log request details
-            Log.d(TAG, "Sending request with sample rate: " + SAMPLE_RATE +
-                    ", Buffer sizes: L:" + leftBuffer.size() +
-                    ", R:" + rightBuffer.size() +
-                    ", Stereo:" + stereoBuffer.size());
+            // Log the request details
+            Log.d(TAG, String.format("Sending request to %s", SERVER_URL));
+            Log.d(TAG, String.format("Left channel size: %d bytes, Right channel size: %d bytes",
+                    leftData.length, rightData.length));
 
             // Send request asynchronously
             client.newCall(request).enqueue(new Callback() {
@@ -260,6 +395,7 @@ public class AudioRecordingService extends Service {
                         if (responseBody != null) {
                             String result = responseBody.string();
                             Log.d(TAG, "Server response: " + result);
+
                             // Broadcast result to activity
                             Intent intent = new Intent("AUDIO_INFERENCE_RESULT");
                             intent.putExtra("result", result);
@@ -273,43 +409,39 @@ public class AudioRecordingService extends Service {
             e.printStackTrace();
         }
     }
-    private byte[] shortArrayToByteArray(ArrayList<Short> shortArray) {
-        byte[] byteArray = new byte[shortArray.size() * 2];
-        for (int i = 0; i < shortArray.size(); i++) {
-            short sample = shortArray.get(i);
-            byteArray[i * 2] = (byte) (sample & 0xff);
-            byteArray[i * 2 + 1] = (byte) ((sample >> 8) & 0xff);
+    private byte[] shortArrayToByteArray(ArrayList<Short> shorts) {
+        byte[] bytes = new byte[shorts.size() * 2];
+        for (int i = 0; i < shorts.size(); i++) {
+            short value = shorts.get(i);
+            // Convert to little-endian
+            bytes[i * 2] = (byte) (value & 0xff);
+            bytes[i * 2 + 1] = (byte) ((value >> 8) & 0xff);
         }
-        return byteArray;
+        return bytes;
     }
+
+
     private synchronized void stopRecording() {
         if (!isRecording.get()) {
-            return;  // Already stopped
+            return;
         }
 
-        // First set the flag to stop the recording thread
         isRecording.set(false);
 
-        // Safely stop the recording thread
         if (recordingThread != null) {
             try {
-                // Give the thread a chance to finish naturally
-                recordingThread.join(1000);  // Wait up to 1 second
-
+                recordingThread.join(1000);
                 if (recordingThread.isAlive()) {
                     recordingThread.interrupt();
                 }
             } catch (InterruptedException e) {
                 Log.e(TAG, "Error stopping recording thread: " + e.getMessage());
-            } finally {
-                recordingThread = null;
             }
+            recordingThread = null;
         }
 
-        // Safely stop and release AudioRecord
         if (audioRecord != null) {
             try {
-                // Check if we're still recording before stopping
                 if (audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
                     audioRecord.stop();
                 }
@@ -325,17 +457,19 @@ public class AudioRecordingService extends Service {
             }
         }
 
-        // Clear the buffers in a thread-safe way
+        // Clear buffers
         synchronized (leftBuffer) {
             leftBuffer.clear();
         }
         synchronized (rightBuffer) {
             rightBuffer.clear();
         }
-        synchronized (stereoBuffer) {
-            stereoBuffer.clear();
-        }
+
+        // Reset mic levels
+        leftMicLevel = 0;
+        rightMicLevel = 0;
     }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
@@ -344,15 +478,12 @@ public class AudioRecordingService extends Service {
     @Override
     public void onDestroy() {
         try {
-            // Stop the recording first
             stopRecording();
 
-            // Cancel any pending network requests
             if (client != null) {
                 client.dispatcher().cancelAll();
             }
 
-            // Stop the foreground service
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
             } else {

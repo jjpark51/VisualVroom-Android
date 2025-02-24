@@ -3,4 +3,5 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="highlight_color">#80ADD8E6</color>
+    <color name="navbar_color">#2754C3</color>
 </resources>
