@@ -105,11 +105,11 @@ public class SoundDetectionFragment extends Fragment {
     private int getAnimationResource(String vehicleType) {
         switch (vehicleType.toLowerCase()) {
             case "Siren":
-                return R.raw.siren;
+                return R.raw.car_horn;
             case "Bike":
-                return R.raw.siren;
+                return R.raw.car_horn;
             case "Horn":
-                return R.raw.car_horns;
+                return R.raw.bike;
             default:
                 return 0;
         }
