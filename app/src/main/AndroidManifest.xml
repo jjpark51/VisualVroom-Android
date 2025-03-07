@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+
     <!-- Location permissions -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -23,7 +26,6 @@
     <!-- Declare this is a watch app -->
     <uses-feature android:name="android.hardware.type.watch" />
 
-
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -36,6 +38,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="31">
 
+        <!-- Service declarations -->
         <service
             android:name=".WearNotificationService"
             android:enabled="true"
@@ -48,12 +51,7 @@
             android:exported="false"
             android:foregroundServiceType="microphone|location" />
 
-        <!-- Wearable companion configuration -->
-        <meta-data
-            android:name="com.google.android.wearable.standalone"
-            android:value="false" />
-
-
+        <!-- Wearable configuration -->
         <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="false" />
@@ -68,12 +66,22 @@
             android:name="com.google.android.wearable.extension.capability"
             android:value="watch" />
 
+        <!-- Activities -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
+        <activity
+            android:name=".watch.WearAlertActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>

@@ -171,20 +171,37 @@ public class AudioRecorderFragment extends Fragment {
                         consecutiveQuietSamples = 0;
 
                         // Log inference details
-                        Log.d(TAG, String.format("Inference result (continuous) - %s from %s (confidence: %.2f)",
+                        Log.d(TAG, String.format("Inference result (continuous) - %s from %s (confidence: %.2f, shouldNotify: %b)",
                                 result.getVehicleType(),
                                 result.getDirection(),
-                                result.getConfidence()));
+                                result.getConfidence(),
+                                result.getShouldNotify()));
 
-                        // Show result to user if confidence is high enough
-                        if (result.getShouldNotify()) {
-                            String message = String.format("%s detected from %s",
+                        // Force notification if confidence is high enough, regardless of shouldNotify flag
+                        boolean shouldShow = result.getShouldNotify() || result.getConfidence() > 0.97;
+
+                        if (shouldShow) {
+                            String message = String.format("%s detected from %s (%.2f)",
                                     result.getVehicleType(),
-                                    result.getDirection());
+                                    result.getDirection(),
+                                    result.getConfidence());
                             showToast(message);
 
+                            // Always update animations when confidence is high
+                            Log.d(TAG, "Showing animation for high confidence detection: " + result.getConfidence());
                             updateVehicleAnimation(result.getVehicleType());
                             updateDirectionIndicator(result.getDirection());
+
+                            // Also send to watch through MainActivity if possible
+                            try {
+                                MainActivity activity = (MainActivity) getActivity();
+                                if (activity != null) {
+                                    activity.sendAlertToWatch(result.getVehicleType(), result.getDirection());
+                                    Log.d(TAG, "Sent alert to watch via MainActivity");
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed to send alert to watch: " + e.getMessage());
+                            }
                         }
 
                         // Remain in recording state

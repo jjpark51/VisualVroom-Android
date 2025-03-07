@@ -91,7 +91,7 @@
             android:focusable="true"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:lottie_fileName="mic.json"
+            app:lottie_rawRes="@raw/mic"
             app:lottie_autoPlay="false"
             app:lottie_loop="true" />
 

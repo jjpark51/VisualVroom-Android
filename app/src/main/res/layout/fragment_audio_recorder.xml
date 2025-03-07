@@ -94,7 +94,7 @@
             app:layout_constraintLeft_toLeftOf="parent"
             app:layout_constraintRight_toRightOf="parent"
             app:layout_constraintTop_toBottomOf="@id/statusText"
-            app:lottie_fileName="mic.json"
+            app:lottie_rawRes="@raw/mic"
             app:lottie_autoPlay="false"
             app:lottie_loop="true" />
 

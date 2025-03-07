@@ -25,12 +25,13 @@ import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class WearNotificationService extends Service {
     private static final String TAG = "WearNotificationService";
     private final IBinder binder = new LocalBinder();
-    private static final String WEAR_PATH = "/message";
+    private static final String PATH_VEHICLE_ALERT = "/vehicle_alert";
     private GoogleApiClient googleApiClient;
 
     public class LocalBinder extends Binder {
@@ -53,28 +54,6 @@ public class WearNotificationService extends Service {
         return binder;
     }
 
-    public void sendMessageToWear(String message) {
-        if (googleApiClient != null && googleApiClient.isConnected()) {
-            PendingResult<NodeApi.GetConnectedNodesResult> nodes = Wearable.NodeApi.getConnectedNodes(googleApiClient);
-            nodes.setResultCallback(result -> {
-                for (Node node : result.getNodes()) {
-                    PendingResult<MessageApi.SendMessageResult> messageResult =
-                            Wearable.MessageApi.sendMessage(googleApiClient, node.getId(), WEAR_PATH, message.getBytes());
-
-                    messageResult.setResultCallback(sendMessageResult -> {
-                        if (!sendMessageResult.getStatus().isSuccess()) {
-                            Log.e(TAG, "Failed to send message to wear: " + sendMessageResult.getStatus().getStatusCode());
-                        } else {
-                            Log.d(TAG, "Successfully sent message to wear");
-                        }
-                    });
-                }
-            });
-        } else {
-            Log.e(TAG, "GoogleApiClient not connected");
-        }
-    }
-
     @Override
     public void onDestroy() {
         if (googleApiClient != null && googleApiClient.isConnected()) {
@@ -85,17 +64,93 @@ public class WearNotificationService extends Service {
 
     public void sendAlert(String vehicleType, String direction) {
         try {
+            // Create the alert JSON with all necessary information
             JSONObject alert = new JSONObject();
             alert.put("vehicle_type", vehicleType);
             alert.put("direction", direction);
 
-            // Add your wear device communication logic here
-            // For example, using Wearable.MessageClient to send the alert
+            // Add vibration pattern based on the type of vehicle
+            JSONArray vibrationPattern = createVibrationPattern(vehicleType);
+            alert.put("vibration_pattern", vibrationPattern);
 
-            Log.d(TAG, "Alert sent to wear device: " + alert.toString());
+            // Actually send the alert to the wear device
+            if (googleApiClient != null && googleApiClient.isConnected()) {
+                final String alertJson = alert.toString();
+
+                // Get all connected nodes (watch devices)
+                PendingResult<NodeApi.GetConnectedNodesResult> nodes =
+                        Wearable.NodeApi.getConnectedNodes(googleApiClient);
+
+                nodes.setResultCallback(result -> {
+                    for (Node node : result.getNodes()) {
+                        // Send the message to each connected watch
+                        Wearable.MessageApi.sendMessage(
+                                        googleApiClient,
+                                        node.getId(),
+                                        PATH_VEHICLE_ALERT,
+                                        alertJson.getBytes())
+                                .setResultCallback(sendMessageResult -> {
+                                    if (sendMessageResult.getStatus().isSuccess()) {
+                                        Log.d(TAG, "Alert successfully sent to watch: " + node.getDisplayName());
+                                    } else {
+                                        Log.e(TAG, "Failed to send alert to watch: " +
+                                                sendMessageResult.getStatus().getStatusCode());
+                                    }
+                                });
+                    }
+                });
+
+                Log.d(TAG, "Alert prepared for watch: " + alertJson);
+            } else {
+                Log.e(TAG, "GoogleApiClient not connected, can't send alert to watch");
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error sending alert: " + e.getMessage());
         }
+    }
+
+    // Create different vibration patterns based on vehicle type
+    private JSONArray createVibrationPattern(String vehicleType) throws Exception {
+        JSONArray pattern = new JSONArray();
+
+        switch (vehicleType.toLowerCase()) {
+            case "siren":
+                // Urgent pattern - short pulses
+                pattern.put(0L);    // Start immediately
+                pattern.put(100L);  // Vibrate
+                pattern.put(100L);  // Pause
+                pattern.put(100L);  // Vibrate
+                pattern.put(100L);  // Pause
+                pattern.put(300L);  // Longer vibrate
+                pattern.put(200L);  // Pause
+                pattern.put(300L);  // Longer vibrate
+                break;
+
+            case "bike":
+                // Moderate pattern - medium pulses
+                pattern.put(0L);    // Start immediately
+                pattern.put(200L);  // Vibrate
+                pattern.put(200L);  // Pause
+                pattern.put(200L);  // Vibrate
+                pattern.put(500L);  // Longer pause
+                pattern.put(200L);  // Vibrate
+                break;
+
+            case "horn":
+                // Alert pattern - longer pulses
+                pattern.put(0L);    // Start immediately
+                pattern.put(400L);  // Vibrate
+                pattern.put(200L);  // Pause
+                pattern.put(400L);  // Vibrate
+                break;
+
+            default:
+                // Default pattern - single pulse
+                pattern.put(0L);    // Start immediately
+                pattern.put(300L);  // Vibrate
+        }
+
+        return pattern;
     }
 
     // Add this if you're using this as a Foreground Service

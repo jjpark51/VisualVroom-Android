@@ -139,7 +139,14 @@ public class MainActivity extends AppCompatActivity {
             return 3; // Updated to include the new AudioRecorderFragment
         }
     }
-
+    public void sendAlertToWatch(String vehicleType, String direction) {
+        if (isServiceBound && wearService != null) {
+            Log.d(TAG, "Sending alert to watch: " + vehicleType + " from " + direction);
+            wearService.sendAlert(vehicleType, direction);
+        } else {
+            Log.d(TAG, "Cannot send to watch - service not bound");
+        }
+    }
     private void checkAndRequestPermissions() {
         List<String> permissions = new ArrayList<>();
 
@@ -269,10 +276,19 @@ public class MainActivity extends AppCompatActivity {
     private void handleInferenceResult(String result) {
         try {
             JSONObject resultJson = new JSONObject(result);
-            if (resultJson.has("should_notify") && resultJson.getBoolean("should_notify")) {
-                String vehicleType = resultJson.getString("vehicle_type");
-                String direction = resultJson.getString("direction");
+            JSONObject inferenceResult = resultJson.getJSONObject("inference_result");
 
+            // Extract the relevant fields
+            String vehicleType = inferenceResult.getString("vehicle_type");
+            String direction = inferenceResult.getString("direction");
+            double confidence = inferenceResult.getDouble("confidence");
+            boolean shouldNotify = inferenceResult.getBoolean("should_notify");
+
+            Log.d(TAG, String.format("Inference result: %s from %s, confidence: %.4f, should notify: %s",
+                    vehicleType, direction, confidence, shouldNotify));
+
+            // Only proceed if confidence is high enough (should_notify will be true if confidence > 0.97)
+            if (shouldNotify) {
                 // Update the sound detection fragment UI
                 if (soundDetectionFragment != null) {
                     soundDetectionFragment.updateDetection(vehicleType, direction);
@@ -280,7 +296,10 @@ public class MainActivity extends AppCompatActivity {
 
                 // Send alert to watch if service is bound
                 if (isServiceBound && wearService != null) {
+                    Log.d(TAG, "Sending alert to watch: " + vehicleType + " from " + direction);
                     wearService.sendAlert(vehicleType, direction);
+                } else {
+                    Log.d(TAG, "Cannot send to watch - service not bound");
                 }
             }
         } catch (JSONException e) {

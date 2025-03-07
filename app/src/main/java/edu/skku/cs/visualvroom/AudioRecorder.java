@@ -257,13 +257,32 @@ public class AudioRecorder {
                                 return;
                             }
 
+                            // Get the vehicle type, direction, and confidence
+                            String vehicleType = inferenceJson.getString("vehicle_type");
+                            String direction = inferenceJson.getString("direction");
+                            double confidence = inferenceJson.getDouble("confidence");
+
+                            // Calculate shouldNotify - either use server value or determine based on confidence
+                            boolean shouldNotify = inferenceJson.optBoolean("should_notify", false);
+
+                            // Force shouldNotify to true if confidence is high enough
+                            if (!shouldNotify && confidence > 0.97) {
+                                shouldNotify = true;
+                                Log.d(TAG, "Forcing shouldNotify to true based on high confidence: " + confidence);
+                            }
+
                             InferenceResult result = new InferenceResult(
-                                    inferenceJson.getString("vehicle_type"),
-                                    inferenceJson.getString("direction"),
-                                    inferenceJson.getDouble("confidence"),
-                                    inferenceJson.getBoolean("should_notify"),
+                                    vehicleType,
+                                    direction,
+                                    confidence,
+                                    shouldNotify,
                                     false  // Not too quiet
                             );
+
+                            Log.d(TAG, String.format("Created inference result: %s from %s (confidence: %.2f, shouldNotify: %b)",
+                                    result.getVehicleType(), result.getDirection(),
+                                    result.getConfidence(), result.getShouldNotify()));
+
                             callback.onSuccess(result);
                         } catch (Exception e) {
                             String error = "Error parsing snapshot response: " + e.getMessage();
@@ -288,7 +307,6 @@ public class AudioRecorder {
             }
         }
     }
-
     public void sendToBackend(final AudioRecorderCallback callback) {
         if (outputFile == null || !outputFile.exists()) {
             callback.onError("No recording file available");
