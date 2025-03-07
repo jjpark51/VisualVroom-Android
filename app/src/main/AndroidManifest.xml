@@ -17,6 +17,13 @@
     <!-- Android 13+ specific permissions -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Wearable specific permissions -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Declare this is a watch app -->
+    <uses-feature android:name="android.hardware.type.watch" />
+
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -41,10 +48,25 @@
             android:exported="false"
             android:foregroundServiceType="microphone|location" />
 
+        <!-- Wearable companion configuration -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
 
         <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="false" />
+
+        <!-- Specify compatibility with Wear OS -->
+        <meta-data
+            android:name="com.google.android.gms.version"
+            android:value="@integer/google_play_services_version" />
+
+        <!-- Declare the capability to run on Wear OS -->
+        <meta-data
+            android:name="com.google.android.wearable.extension.capability"
+            android:value="watch" />
 
         <activity
             android:name=".MainActivity"

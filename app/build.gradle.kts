@@ -45,8 +45,6 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("com.airbnb.android:lottie:6.3.0")
     implementation("com.github.wendykierp:JTransforms:3.1")
-
-
     // Wear OS dependencies
     implementation("com.google.android.gms:play-services-wearable:18.1.0")
     implementation("androidx.wear:wear:1.3.0")
